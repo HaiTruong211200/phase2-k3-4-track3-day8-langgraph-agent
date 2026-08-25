@@ -1,160 +1,280 @@
-# Day 08 Lab Report
+# Báo cáo Day 08 — LangGraph Agent Lab
 
-## 1. Team / student
+## 1. Sinh viên
 
-- Name: Hai
-- Repo: `HaiTruong211200/phase2-k3-4-track3-day8-langgraph-agent`
-- Commit reviewed: `6d8252d` plus the current working-tree implementation
-- Generated: 2026-08-25
+- Họ tên: Trương Ngọc Hải - 2A202601092
+- Repository: `HaiTruong211200/phase2-k3-4-track3-day8-langgraph-agent`
+- Commit đối chiếu: `6d8252d` cùng phần triển khai hiện tại trong working tree
+- Ngày: 2026-08-25
 
-## 2. Metrics summary
+## 2. Tổng hợp metrics
 
-| Metric | Value |
+| Chỉ số | Giá trị |
 |---|---:|
-| Total scenarios | 7 |
-| Successful scenarios | 7 |
-| Success rate | 100.00% |
-| Average nodes visited | 6.43 |
-| Total retries | 3 |
-| Total real HITL interrupts | 0 |
-| Persistence resume demonstrated | Yes |
+| Tổng số scenario | 7 |
+| Scenario thành công | 7 |
+| Tỷ lệ thành công | 100.00% |
+| Số node trung bình | 6.43 |
+| Tổng số retry | 3 |
+| Tổng HITL interrupt thực | 0 |
+| Đã chứng minh khôi phục persistence | Có |
 
-## 3. Architecture
+## 3. Kiến trúc
 
-The graph registers eleven nodes with narrow responsibilities: `intake`, `classify`,
-`tool`, `evaluate`, `answer`, `clarify`, `risky_action`, `approval`, `retry`,
-`dead_letter`, and `finalize`. `START -> intake` is fixed. A guardrail decision after
-`intake` either stops at `finalize` or continues to `classify`; classification then selects
-the direct-answer, tool, clarification, risky-action, or initial-error branch.
+Graph giữ mười một node core có trách nhiệm tách biệt: `intake`, `classify`, `tool`,
+`evaluate`, `answer`, `clarify`, `risky_action`, `approval`, `retry`, `dead_letter` và
+`finalize`. Cạnh `START -> intake` là cố định. Sau `intake`, guardrail quyết định dừng ở
+`finalize` hoặc tiếp tục tới `classify`. Kết quả phân loại chọn nhánh trả lời trực tiếp,
+gọi tool, hỏi bổ sung thông tin, hành động rủi ro hoặc lỗi ban đầu.
 
-The tool path is `tool -> evaluate`; evaluation conditionally selects `answer` or `retry`.
-The retry router selects `tool` only while `attempt < max_attempts`, otherwise it selects
-`dead_letter`. The risky path is `risky_action -> approval`, after which approval selects
-`tool` and rejection selects `clarify`. `answer`, `clarify`, and `dead_letter` all have a
-fixed edge to `finalize`, followed by `END`. Thus every cycle has a monotonic attempt bound
-and every non-cyclic branch has an explicit terminal edge.
+Nhánh tool đi theo `tool -> evaluate`; kết quả đánh giá chọn `answer` hoặc `retry`. Router
+retry chỉ quay lại `tool` khi `attempt < max_attempts`, nếu không sẽ tới `dead_letter`.
+Nhánh rủi ro đi theo `risky_action -> approval`; quyết định duyệt đi tới `tool`, còn từ
+chối đi tới `clarify`. Ba node `answer`, `clarify` và `dead_letter` đều đi tới `finalize`,
+sau đó là `END`. Vòng lặp duy nhất có biến đếm tăng đơn điệu và mọi nhánh khác đều có cạnh
+kết thúc rõ ràng. Khi bật fan-out, graph dùng thêm ba node `tool_dispatch`,
+`parallel_tool` và `merge_tools`; khi tắt flag, route core vẫn đi thẳng tới `tool`.
 
-SQLite checkpointing uses a unique `thread_id` per scenario and batch run. This avoids
-merging append-only audit history from repeated benchmark runs while still allowing every
-node transition to be recovered and inspected within that run.
+SQLite dùng một `thread_id` riêng cho từng scenario và từng batch run. Cách này cho phép
+khôi phục từng bước nhưng không trộn lịch sử append-only của các lần benchmark khác nhau.
 
-## 4. State schema
+### 3.1 Graph thực tế xuất từ compiled graph
 
-| Field | Update behavior | Purpose |
+Sơ đồ dưới đây được lưu tại `reports/actual_graph.mmd` và sinh từ
+`compiled_graph.get_graph().draw_mermaid()`. Test extension so sánh nguyên văn artifact với
+compiled graph để phát hiện node hoặc edge bị lệch. Đường liền là fixed edge; đường nét đứt
+là conditional edge. Layout trái sang phải phản ánh hướng thực thi, không có nghĩa mọi nhánh
+đều chạy trong cùng một request.
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+flowchart LR;
+	__start__([<p>__start__</p>]):::first
+	intake(intake)
+	classify(classify)
+	tool(tool)
+	tool_dispatch(tool_dispatch)
+	parallel_tool(parallel_tool)
+	merge_tools(merge_tools)
+	evaluate(evaluate)
+	answer(answer)
+	clarify(clarify)
+	risky_action(risky_action)
+	approval(approval)
+	retry(retry)
+	dead_letter(dead_letter)
+	finalize(finalize)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> intake;
+	answer --> finalize;
+	approval -.-> clarify;
+	approval -.-> tool;
+	approval -.-> tool_dispatch;
+	clarify --> finalize;
+	classify -.-> answer;
+	classify -.-> clarify;
+	classify -.-> retry;
+	classify -.-> risky_action;
+	classify -.-> tool;
+	classify -.-> tool_dispatch;
+	dead_letter --> finalize;
+	evaluate -.-> answer;
+	evaluate -.-> retry;
+	intake -.-> classify;
+	intake -.-> finalize;
+	merge_tools --> evaluate;
+	parallel_tool --> merge_tools;
+	retry -.-> dead_letter;
+	retry -.-> tool;
+	risky_action --> approval;
+	tool --> evaluate;
+	tool_dispatch -.-> parallel_tool;
+	finalize --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+classDef step fill:#f8fafc,stroke:#94a3b8,stroke-width:1.5px,color:#172033;
+classDef decision fill:#fff7ed,stroke:#f59e0b,stroke-width:2px,color:#7c2d12;
+classDef toolNode fill:#f5f3ff,stroke:#8b5cf6,stroke-width:2px,color:#4c1d95;
+classDef guard fill:#fff1f2,stroke:#f43f5e,stroke-width:2px,color:#881337;
+classDef terminal fill:#eef2ff,stroke:#6366f1,stroke-width:2px,color:#312e81;
+class intake,answer,clarify,merge_tools step;
+class classify,evaluate,retry decision;
+class tool,tool_dispatch,parallel_tool toolNode;
+class risky_action,approval guard;
+class dead_letter,finalize terminal;
+classDef active fill:#dbeafe,stroke:#2563eb,stroke-width:4px,color:#172033,font-weight:bold;
+classDef completed fill:#dcfce7,stroke:#16a34a,stroke-width:2.5px,color:#14532d;
+```
+
+## 4. State schema và reducer
+
+| Trường | Cách cập nhật | Lý do |
 |---|---|---|
-| `query` | overwrite | Normalized current request |
-| `route` | overwrite | Current classification or blocked route |
-| `attempt` | overwrite | Current bounded-retry counter |
-| `evaluation_result` | overwrite | Latest tool evaluation gate |
-| `pending_question` | overwrite | Current clarification request |
-| `proposed_action` | overwrite | Current action awaiting approval |
-| `approval` | overwrite | Latest human/mock approval decision |
-| `security_blocked` | overwrite | Intake guardrail decision |
-| `messages` | append | Conversation/audit messages |
-| `tool_results` | append | Complete tool-attempt history |
-| `errors` | append | Failure and retry history |
-| `events` | append | Normalized node-level audit trail |
+| `query` | overwrite | Request hiện tại sau khi chuẩn hóa |
+| `route` | overwrite | Route phân loại hoặc blocked hiện tại |
+| `attempt` | overwrite | Bộ đếm retry hiện tại |
+| `evaluation_result` | overwrite | Kết quả đánh giá tool mới nhất |
+| `pending_question` | overwrite | Câu hỏi làm rõ hiện tại |
+| `proposed_action` | overwrite | Hành động hiện chờ phê duyệt |
+| `approval` | overwrite | Quyết định phê duyệt mới nhất |
+| `security_blocked` | overwrite | Quyết định guardrail tại intake |
+| `messages` | append | Lịch sử thông điệp/audit |
+| `tool_results` | append | Lịch sử mọi lần gọi tool |
+| `errors` | append | Lịch sử lỗi và retry |
+| `events` | append | Audit trail theo từng node |
 
-## 5. Scenario results
+Các trường routing phải overwrite để router chỉ đọc quyết định mới nhất. Các trường lịch
+sử dùng reducer `add` để không mất evidence qua retry hoặc checkpoint resume.
 
-| Scenario | Expected route | Actual route | Success | Nodes | Retries | HITL interrupts | Approval observed | Latency (ms) | Errors |
+## 5. Kết quả scenario
+
+| Scenario | Route mong đợi | Route thực tế | Thành công | Số node | Retry | HITL interrupt | Có approval | Độ trễ (ms) | Lỗi |
 |---|---|---|---:|---:|---:|---:|---:|---:|---|
-| S01_simple | simple | simple | Yes | 4 | 0 | 0 | No | 6620 | - |
-| S02_tool | tool | tool | Yes | 6 | 0 | 0 | No | 4312 | - |
-| S03_missing | missing_info | missing_info | Yes | 4 | 0 | 0 | No | 1718 | - |
-| S04_risky | risky | risky | Yes | 8 | 0 | 0 | Yes | 4204 | - |
-| S05_error | error | error | Yes | 10 | 2 | 0 | No | 4045 | Transient failure recorded; retry attempt 1; Transient failure recorded; retry attempt 2 |
-| S06_delete | risky | risky | Yes | 8 | 0 | 0 | Yes | 4310 | - |
-| S07_dead_letter | error | error | Yes | 5 | 1 | 0 | No | 1817 | Transient failure recorded; retry attempt 1; Maximum retry count reached after 1 attempt(s) |
+| S01_simple | simple | simple | Có | 4 | 0 | 0 | Không | 6620 | - |
+| S02_tool | tool | tool | Có | 6 | 0 | 0 | Không | 4312 | - |
+| S03_missing | missing_info | missing_info | Có | 4 | 0 | 0 | Không | 1718 | - |
+| S04_risky | risky | risky | Có | 8 | 0 | 0 | Có | 4204 | - |
+| S05_error | error | error | Có | 10 | 2 | 0 | Không | 4045 | Transient failure recorded; retry attempt 1; Transient failure recorded; retry attempt 2 |
+| S06_delete | risky | risky | Có | 8 | 0 | 0 | Có | 4310 | - |
+| S07_dead_letter | error | error | Có | 5 | 1 | 0 | Không | 1817 | Transient failure recorded; retry attempt 1; Maximum retry count reached after 1 attempt(s) |
 
-## 6. Failure analysis
+Độ trễ là thời gian end-to-end đo bằng `perf_counter`, không phải latency riêng của từng
+node hay LLM. `HITL interrupt` chỉ đếm interrupt thật, không đếm lượt qua mock approval.
 
-### Retry and tool failure
+## 6. Phân tích failure mode
 
-- **Origin:** `tool_node` deliberately returns a result containing `ERROR` for a transient
-  error route while `attempt < 2`.
-- **Detection evidence:** `tool_results[-1]` preserves the failing output;
-  `evaluate_node` overwrites `evaluation_result` with `needs_retry`; `events` records
-  `tool:failed`, `evaluate:completed`, and `retry:scheduled`; `errors` records the attempt.
-- **Containment and next edge:** `route_after_evaluate` selects `retry`. That node increments
-  `attempt`, and `route_after_retry` selects either another `tool` call or `dead_letter`.
-- **Termination guarantee:** `attempt` increases monotonically and the retry edge is allowed
-  only while `attempt < max_attempts`. At the bound, `dead_letter` sets `final_answer` and
-  follows the fixed `dead_letter -> finalize -> END` edges.
-- **Observed evidence:** retry counts in the final metrics are `S05_error`=2, `S07_dead_letter`=1. A scenario
-  can be successful because it followed its expected error/dead-letter route, not because
-  the underlying tool operation succeeded.
-- **Residual limitation:** the tool and evaluator are deterministic mocks. They do not yet
-  distinguish retryable transport errors from permanent business errors, apply backoff, or
-  enforce idempotency for a real side effect.
+### 6.1 Tool failure dẫn tới bounded retry hoặc dead-letter
 
-### Risky action rejected before tool execution
+- **Điểm phát sinh:** `tool_node` trả kết quả chứa `ERROR` cho route lỗi tạm thời khi
+  `attempt < 2`.
+- **Tín hiệu phát hiện:** `tool_results[-1]` giữ output lỗi; `evaluate_node` ghi đè
+  `evaluation_result=needs_retry`; `events` ghi `tool:failed`, `evaluate:completed` và
+  `retry:scheduled`; `errors` giữ số lần thử.
+- **Graph đi tiếp:** `route_after_evaluate` chọn `retry`; node này tăng `attempt`, sau đó
+  `route_after_retry` chọn gọi lại `tool` hoặc chuyển sang `dead_letter`.
+- **Bảo đảm termination:** `attempt` tăng đơn điệu và cạnh retry chỉ được phép khi
+  `attempt < max_attempts`. Khi chạm giới hạn, graph đi theo
+  `dead_letter -> finalize -> END`.
+- **Evidence thực tế:** số retry cuối là `S05_error`=2, `S07_dead_letter`=1. Scenario error thành công nghĩa là
+  đi đúng route mong đợi, không có nghĩa thao tác tool cơ sở đã thành công.
+- **Giới hạn:** tool và evaluator là mock; chưa phân biệt lỗi retryable/permanent, chưa có
+  backoff và chưa bảo đảm idempotency cho side effect thật.
 
-- **Origin:** `classify_node` assigns route `risky` to refunds, deletions, or other
-  state-changing requests; `risky_action_node` writes the requested side effect to
-  `proposed_action` without executing it.
-- **Detection evidence:** `risk_level=high`, the `risky_action:prepared` event, and the
-  overwrite-only `approval.approved` decision provide the routing signal and audit record.
-- **Containment and next edge:** `route_after_approval` sends `approved=True` to `tool`, but
-  sends rejection or a missing decision to `clarify`; therefore rejection cannot reach the
-  side-effecting node.
-- **Termination guarantee:** the rejected branch has fixed edges
-  `clarify -> finalize -> END`. The approved branch rejoins the already bounded
-  `tool -> evaluate` path.
-- **Observed evidence:** approval-required scenarios report `S04_risky`=observed, `S06_delete`=observed. The final
-  scenario batch used mock approvals and recorded 0 real HITL
-  interrupts, so it demonstrates the approval gate but not an interactive rejection.
-- **Residual limitation:** mock approval defaults to `True`. Rejection routing is covered by
-  tests, but production requires authenticated reviewers, durable pause/resume, authorization
-  policy, expiry, and an idempotent tool boundary.
+### 6.2 Risky action bị từ chối trước tool
 
-### Prompt injection
+- **Điểm phát sinh:** `classify_node` gán route `risky`; `risky_action_node` chỉ ghi
+  `proposed_action`, chưa thực thi.
+- **Tín hiệu phát hiện:** `risk_level=high`, event `risky_action:prepared` và
+  `approval.approved` cung cấp tín hiệu routing cùng audit record.
+- **Graph đi tiếp:** `approved=True` đi tới `tool`; từ chối hoặc thiếu quyết định đi tới
+  `clarify`, vì vậy không chạm node tạo side effect.
+- **Bảo đảm termination:** nhánh từ chối đi `clarify -> finalize -> END`; nhánh được duyệt
+  nhập lại đường tool vốn đã có retry bound.
+- **Evidence thực tế:** scenario cần approval ghi nhận `S04_risky`=đã ghi nhận, `S06_delete`=đã ghi nhận. Batch cuối dùng
+  mock approval và có 0 HITL interrupt thật, nên chứng minh approval
+  gate nhưng chưa chứng minh một lần từ chối tương tác.
+- **Giới hạn:** mock approval mặc định `True`. Production cần reviewer được xác thực,
+  pause/resume bền vững, authorization policy, expiry và tool idempotent.
 
-The intake guardrail normalizes Unicode, removes control characters, limits input length,
-and blocks high-confidence instruction-override, prompt-exfiltration, role-injection, and
-safety-bypass patterns before classification. LLM calls additionally separate trusted
-system instructions from untrusted user data.
+### 6.3 Prompt injection tại intake
 
-Scenario-level outcome: No scenario-level failures were observed in this run.
+`intake` chuẩn hóa Unicode, loại control character, giới hạn độ dài và chặn các mẫu ghi đè
+instruction, lấy cắp prompt, giả mạo role hoặc bypass safety. Input bị chặn đi thẳng
+`intake -> finalize -> END`, không tới LLM. Giới hạn là rule-based detector vẫn có thể bỏ
+sót obfuscation hoặc tạo false positive; production cần adversarial evaluation và moderation.
 
-## 7. Persistence / recovery evidence
+Kết quả cấp scenario: Không có scenario nào thất bại trong lần chạy cuối.
 
-The configured `SqliteSaver` uses WAL mode and `check_same_thread=False`. Each batch adds a
-random run suffix to `thread_id`, preventing old append-only events from contaminating new
-metrics. After the scenario loop, the CLI constructs a **new saver and graph** against the
-same database, retrieves the first scenario with the same `thread_id`, and requires both a
-matching `scenario_id` and at least two history snapshots before setting
-`resume_success=true`. The final metrics record this proof as **successful**.
+## 7. Evidence về persistence và recovery
 
-The independent persistence test is stricter about connection lifecycle: it invokes a
-small graph, closes the original SQLite connection, reopens the database through a second
-saver, verifies the recovered value, and confirms `get_state_history()` contains multiple
-snapshots. This proves persisted recovery without exposing raw state, credentials, or
-database contents. It does not simulate a process kill during an in-flight external tool.
+`SqliteSaver` dùng WAL và `check_same_thread=False`. Mỗi batch thêm hậu tố ngẫu nhiên vào
+`thread_id` để lịch sử cũ không làm sai metrics. Sau vòng scenario, CLI tạo **saver và graph
+mới** trên cùng database, đọc scenario đầu bằng cùng `thread_id`, kiểm tra `scenario_id` và
+yêu cầu ít nhất hai history snapshot trước khi đặt `resume_success=true`. Metrics cuối ghi
+nhận phép kiểm tra này là **thành công**.
 
-## 8. Extension work
+Test persistence độc lập đóng connection ban đầu, mở lại database bằng saver thứ hai, kiểm
+tra state và xác nhận `get_state_history()` có nhiều snapshot. Evidence không chứa raw state,
+credential hay secret. Kiểm thử chưa mô phỏng process bị kill khi external tool đang chạy.
 
-Completed with executable evidence:
+## 8. Extension
 
-- SQLite persistence with WAL mode, reopen verification, and state-history tests.
-- Prompt-injection guardrail before the first LLM node, including a test proving blocked
-  input reaches only `intake` and `finalize`.
-- Optional Langfuse callback wiring with scenario trace names, thread sessions, tags, and
-  metadata; configuration behavior is covered by tests.
+Ngoài phần core, tôi đã làm thêm các phần sau:
 
-Implemented but not demonstrated by the final scenario metrics:
+- SQLite chạy ở chế độ WAL, có test đóng saver rồi mở lại và đọc state history.
+- Guardrail chặn prompt injection trước khi request được chuyển tới LLM.
+- Langfuse callback ghi trace theo `thread_id`, scenario và tag của lần chạy.
+- LLM judge trả kết quả có cấu trúc. Nếu model timeout hoặc vượt giới hạn lần gọi, graph quay
+  về evaluator heuristic.
+- Fan-out tạo hai `Send()` cho `customer_context` và `policy_check`. Reducer sắp kết quả theo
+  `tool_name` để output không thay đổi theo thứ tự worker trả về.
+- HITL thật dùng interrupt và resume trên cùng `thread_id`.
+- Giao diện Streamlit hiển thị graph, trạng thái approval, kết quả fan-out và event trail.
 
-- Real interrupt/resume approval behind `LANGGRAPH_INTERRUPT=true`; the batch run uses mock
-  approval so CI does not pause.
-- Mermaid rendering is available through `graph.get_graph().draw_mermaid()`, but no diagram
-  artifact is claimed as submission evidence.
+### 8.1 Lần chạy LLM judge và fan-out
 
-## 9. Improvement plan
+Tôi chạy ticket: *“Look up customer CUST-1024 account status and check the refund policy.
+Do not issue a refund or perform any account changes.”* Graph đi qua `tool_dispatch`,
+`parallel_tool`, `merge_tools`, `evaluate`, `answer` rồi `finalize`. Đây là đường chạy mong đợi
+khi bật cả fan-out và LLM judge.
 
-The first production priority is the side-effect boundary: replace the mock tool and
-auto-approval with authenticated, idempotent integrations and a durable reviewer interface.
-That closes the largest gap between the demonstrated core graph and safe production use.
-Next, classify errors as retryable/permanent, add exponential backoff, and test process-kill
-recovery during a paused approval. Scenario latency is now measured end-to-end, but per-node
-latency, token usage, tool latency, and trace-delivery success remain future instrumentation;
-the report therefore does not infer them from the current metrics.
+![UI chạy LLM judge và fan-out](evidence/ui_llm_judge_and_parrallel_tools.png)
+
+Trong Langfuse, sau hai span `parallel_tool` là `merge_tools` và `evaluate`. Span `evaluate` có
+lời gọi `ChatGoogleGenerativeAI` và bước parse bằng `PydanticOutputParser`. Vì vậy kết quả đánh
+giá ở lần chạy này đến từ model, không phải evaluator heuristic. Langfuse hiển thị thời gian của
+`evaluate` là khoảng 5,45 giây và chi phí 0,00849 USD. Toàn trace mất 15,15 giây, dùng 592
+prompt token và 2.246 completion token. Tôi không dùng các số tổng này làm số đo riêng cho
+fan-out.
+
+![Langfuse trace của LLM judge và fan-out](evidence/trace_langfuse_llm_judge_parrallel_tools.png)
+
+Các test riêng kiểm tra ba trường hợp của judge: trả structured verdict, timeout rồi fallback và
+dừng gọi model khi chạm cost guard. Test fan-out kiểm tra đủ hai kết quả `customer_context`,
+`policy_check` và thứ tự merge ổn định.
+
+Hai worker hiện chỉ là mock tool và trên trace đều có thời gian 0,00 giây. Vì chưa lưu thời điểm
+bắt đầu/kết thúc của từng worker, lần chạy này mới chứng minh được fan-out bằng `Send()` và bước
+merge, chưa đủ để kết luận hai tool có khoảng thời gian chạy chồng lên nhau.
+
+### 8.2 Lần chạy HITL interrupt/resume
+
+Ở lần chạy risky action, graph hoàn thành `intake`, `classify`, `risky_action` rồi dừng tại
+`approval`. Node `tool` chưa chạy ở thời điểm này.
+
+![UI dừng tại approval interrupt](evidence/ui_approval_interupt.png)
+
+Tôi chọn reject và resume bằng đúng `thread_id` cũ. Graph tiếp tục qua `clarify` và `finalize`;
+`tool` vẫn không được đánh dấu hoàn thành. Như vậy hành động bị chặn trước nơi thực hiện side
+effect, đúng với route `approval -> clarify -> finalize`.
+
+![UI sau khi reviewer reject](evidence/ui_rejection_result.png)
+
+Ảnh dưới chụp lúc graph mới chạy: `intake` có viền xanh dương. Sau mỗi update, node đã đi qua
+được chuyển sang màu xanh lá.
+
+![UI highlight node đang chạy](evidence/ui_graph_running.png)
+
+Các extension này không được bật trong batch metrics core để kết quả CI ổn định:
+
+- LLM judge, fan-out và real interrupt được bật bằng flag; batch mặc định vẫn dùng evaluator,
+  tool và approval mock của core.
+- UI sinh Mermaid trực tiếp từ compiled graph; node đã chạy được tô xanh lá và node
+  hiện tại/tiếp theo được tô xanh dương sau từng update của stream. Mermaid chỉ chứa
+  tên node/edge, không nhúng query, credential hoặc raw event.
+
+## 9. Kế hoạch cải thiện
+
+Việc cần làm tiếp theo là thay mock tool bằng integration thật. Khi đó mỗi side effect cần có
+xác thực và idempotency để resume không thực hiện cùng một thao tác hai lần. Phần retry cũng cần
+phân biệt lỗi tạm thời với lỗi vĩnh viễn và thêm exponential backoff.
+
+Metrics hiện chỉ đo thời gian end-to-end. Nếu tiếp tục phát triển, tôi sẽ ghi latency và thời
+điểm bắt đầu/kết thúc cho từng node, đặc biệt là hai worker fan-out. Khi có các timestamp này mới
+có thể kiểm tra hai tool có chạy chồng thời gian hay không. Tôi cũng cần thêm test kill process
+trong lúc graph đang dừng ở approval để kiểm tra recovery sát với production hơn.

@@ -6,7 +6,14 @@ These strings MUST match node names registered in graph.py.
 
 from __future__ import annotations
 
+import os
+
 from .state import AgentState
+
+
+def _tool_target() -> str:
+    """Select optional fan-out without changing the default core path."""
+    return "tool_dispatch" if os.getenv("LANGGRAPH_FANOUT", "").lower() == "true" else "tool"
 
 
 def route_after_intake(state: AgentState) -> str:
@@ -29,7 +36,7 @@ def route_after_classify(state: AgentState) -> str:
     """
     route_map = {
         "simple": "answer",
-        "tool": "tool",
+        "tool": _tool_target(),
         "missing_info": "clarify",
         "risky": "risky_action",
         "error": "retry",
@@ -71,4 +78,20 @@ def route_after_approval(state: AgentState) -> str:
     - If rejected → "clarify" (ask user for alternative)
     """
     approval = state.get("approval") or {}
-    return "tool" if approval.get("approved", False) else "clarify"
+    return _tool_target() if approval.get("approved", False) else "clarify"
+
+
+def dispatch_parallel_tools(state: AgentState):
+    """Fan out two independent mock tools using LangGraph Send()."""
+    from langgraph.types import Send
+
+    shared = {
+        "query": state.get("query", ""),
+        "route": state.get("route", ""),
+        "attempt": state.get("attempt", 0),
+        "proposed_action": state.get("proposed_action"),
+    }
+    return [
+        Send("parallel_tool", {**shared, "fanout_tool_name": tool_name})
+        for tool_name in ("customer_context", "policy_check")
+    ]

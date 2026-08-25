@@ -51,7 +51,9 @@ def metric_from_state(
         for event in events
         if bool((event.get("metadata") or {}).get("interrupted", False))
     )
-    success = actual_route == expected_route and bool(state.get("final_answer") or state.get("pending_question"))
+    success = actual_route == expected_route and bool(
+        state.get("final_answer") or state.get("pending_question")
+    )
     if approval_required:
         success = success and approval is not None
     return ScenarioMetric(

@@ -209,7 +209,32 @@ Pick one or more:
 | `make typecheck` | Run mypy type checker |
 | `make run-scenarios` | Execute all scenarios → `outputs/metrics.json` |
 | `make grade-local` | Validate metrics.json schema |
+| `make ui` | Chạy Streamlit Review Console |
 | `make clean` | Remove caches and generated files |
+
+### Optional extensions
+
+Chạy giao diện HITL:
+
+```bash
+make ui
+```
+
+Phần **Graph execution** xuất Mermaid trực tiếp từ compiled graph. Trong lúc chạy,
+node đã hoàn thành có màu xanh lá và node hiện tại/tiếp theo có màu xanh dương;
+đến approval interrupt, graph giữ highlight tại node `approval` cho tới khi resume.
+Trình duyệt cần truy cập CDN của Mermaid để render sơ đồ.
+
+UI tự bật interrupt/resume thật và cho phép bật/tắt LLM judge cùng parallel fan-out. Với
+CLI, các extension là opt-in để không đổi core behavior:
+
+```env
+LANGGRAPH_FANOUT=true
+LLM_JUDGE_ENABLED=true
+LLM_JUDGE_TIMEOUT_SECONDS=15
+LLM_JUDGE_MAX_CHARS=2000
+LLM_JUDGE_MAX_ATTEMPT=3
+```
 
 ---
 

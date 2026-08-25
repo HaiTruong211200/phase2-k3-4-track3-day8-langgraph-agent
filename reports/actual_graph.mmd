@@ -1,0 +1,62 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+flowchart LR;
+	__start__([<p>__start__</p>]):::first
+	intake(intake)
+	classify(classify)
+	tool(tool)
+	tool_dispatch(tool_dispatch)
+	parallel_tool(parallel_tool)
+	merge_tools(merge_tools)
+	evaluate(evaluate)
+	answer(answer)
+	clarify(clarify)
+	risky_action(risky_action)
+	approval(approval)
+	retry(retry)
+	dead_letter(dead_letter)
+	finalize(finalize)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> intake;
+	answer --> finalize;
+	approval -.-> clarify;
+	approval -.-> tool;
+	approval -.-> tool_dispatch;
+	clarify --> finalize;
+	classify -.-> answer;
+	classify -.-> clarify;
+	classify -.-> retry;
+	classify -.-> risky_action;
+	classify -.-> tool;
+	classify -.-> tool_dispatch;
+	dead_letter --> finalize;
+	evaluate -.-> answer;
+	evaluate -.-> retry;
+	intake -.-> classify;
+	intake -.-> finalize;
+	merge_tools --> evaluate;
+	parallel_tool --> merge_tools;
+	retry -.-> dead_letter;
+	retry -.-> tool;
+	risky_action --> approval;
+	tool --> evaluate;
+	tool_dispatch -.-> parallel_tool;
+	finalize --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+classDef step fill:#f8fafc,stroke:#94a3b8,stroke-width:1.5px,color:#172033;
+classDef decision fill:#fff7ed,stroke:#f59e0b,stroke-width:2px,color:#7c2d12;
+classDef toolNode fill:#f5f3ff,stroke:#8b5cf6,stroke-width:2px,color:#4c1d95;
+classDef guard fill:#fff1f2,stroke:#f43f5e,stroke-width:2px,color:#881337;
+classDef terminal fill:#eef2ff,stroke:#6366f1,stroke-width:2px,color:#312e81;
+class intake,answer,clarify,merge_tools step;
+class classify,evaluate,retry decision;
+class tool,tool_dispatch,parallel_tool toolNode;
+class risky_action,approval guard;
+class dead_letter,finalize terminal;
+classDef active fill:#dbeafe,stroke:#2563eb,stroke-width:4px,color:#172033,font-weight:bold;
+classDef completed fill:#dcfce7,stroke:#16a34a,stroke-width:2.5px,color:#14532d;

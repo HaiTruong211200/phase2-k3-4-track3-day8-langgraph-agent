@@ -1,7 +1,10 @@
-.PHONY: install test lint typecheck run-scenarios grade-local clean
+.PHONY: install test lint typecheck run-scenarios grade-local ui clean
 
 install:
-	pip install -e '.[dev,google,observability,sqlite]'
+	pip install -e '.[dev,google,observability,sqlite,ui]'
+
+ui:
+	streamlit run streamlit_app.py
 
 test:
 	pytest

@@ -51,11 +51,15 @@ def build_graph(checkpointer: Any | None = None):
         evaluate_node,
         finalize_node,
         intake_node,
+        merge_parallel_tools_node,
+        parallel_tool_worker_node,
         retry_or_fallback_node,
         risky_action_node,
+        tool_dispatch_node,
         tool_node,
     )
     from .routing import (
+        dispatch_parallel_tools,
         route_after_approval,
         route_after_classify,
         route_after_evaluate,
@@ -68,6 +72,9 @@ def build_graph(checkpointer: Any | None = None):
     workflow.add_node("intake", intake_node)
     workflow.add_node("classify", classify_node)
     workflow.add_node("tool", tool_node)
+    workflow.add_node("tool_dispatch", tool_dispatch_node)
+    workflow.add_node("parallel_tool", parallel_tool_worker_node)
+    workflow.add_node("merge_tools", merge_parallel_tools_node)
     workflow.add_node("evaluate", evaluate_node)
     workflow.add_node("answer", answer_node)
     workflow.add_node("clarify", ask_clarification_node)
@@ -89,6 +96,7 @@ def build_graph(checkpointer: Any | None = None):
         {
             "answer": "answer",
             "tool": "tool",
+            "tool_dispatch": "tool_dispatch",
             "clarify": "clarify",
             "risky_action": "risky_action",
             "retry": "retry",
@@ -96,6 +104,13 @@ def build_graph(checkpointer: Any | None = None):
     )
 
     workflow.add_edge("tool", "evaluate")
+    workflow.add_conditional_edges(
+        "tool_dispatch",
+        dispatch_parallel_tools,
+        ["parallel_tool"],
+    )
+    workflow.add_edge("parallel_tool", "merge_tools")
+    workflow.add_edge("merge_tools", "evaluate")
     workflow.add_conditional_edges(
         "evaluate",
         route_after_evaluate,
@@ -111,7 +126,7 @@ def build_graph(checkpointer: Any | None = None):
     workflow.add_conditional_edges(
         "approval",
         route_after_approval,
-        {"tool": "tool", "clarify": "clarify"},
+        {"tool": "tool", "tool_dispatch": "tool_dispatch", "clarify": "clarify"},
     )
 
     workflow.add_edge("answer", "finalize")

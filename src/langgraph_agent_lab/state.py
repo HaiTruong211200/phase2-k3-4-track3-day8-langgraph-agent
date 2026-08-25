@@ -12,6 +12,17 @@ from typing import Annotated, Any, TypedDict
 from pydantic import BaseModel, Field, field_validator
 
 
+def merge_parallel_results(
+    current: list[dict[str, Any]], update: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge fan-out results deterministically, independent of completion order."""
+    indexed = {
+        (str(item.get("tool_name", "")), int(item.get("attempt", 0))): item
+        for item in [*current, *update]
+    }
+    return [indexed[key] for key in sorted(indexed)]
+
+
 class Route(StrEnum):
     SIMPLE = "simple"
     TOOL = "tool"
@@ -55,11 +66,15 @@ class AgentState(TypedDict, total=False):
     max_attempts: int
     final_answer: str | None
     evaluation_result: str
+    evaluation_reason: str | None
+    evaluation_method: str | None
     pending_question: str | None
     proposed_action: str | None
     approval: dict[str, Any] | None
     security_blocked: bool
     security_reason: str | None
+    fanout_tool_name: str | None
+    parallel_tool_results: Annotated[list[dict[str, Any]], merge_parallel_results]
     messages: Annotated[list[str], add]
     tool_results: Annotated[list[str], add]
     errors: Annotated[list[str], add]
@@ -95,11 +110,15 @@ def initial_state(scenario: Scenario) -> AgentState:
         "max_attempts": scenario.max_attempts,
         "final_answer": None,
         "evaluation_result": "",
+        "evaluation_reason": None,
+        "evaluation_method": None,
         "pending_question": None,
         "proposed_action": None,
         "approval": None,
         "security_blocked": False,
         "security_reason": None,
+        "fanout_tool_name": None,
+        "parallel_tool_results": [],
         "messages": [],
         "tool_results": [],
         "errors": [],
@@ -109,4 +128,5 @@ def initial_state(scenario: Scenario) -> AgentState:
 
 def make_event(node: str, event_type: str, message: str, **metadata: Any) -> dict[str, Any]:
     """Create a normalized event payload."""
-    return LabEvent(node=node, event_type=event_type, message=message, metadata=metadata).model_dump()
+    event = LabEvent(node=node, event_type=event_type, message=message, metadata=metadata)
+    return event.model_dump()
