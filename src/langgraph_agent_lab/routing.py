@@ -9,6 +9,11 @@ from __future__ import annotations
 from .state import AgentState
 
 
+def route_after_intake(state: AgentState) -> str:
+    """Stop unsafe input before it is sent to an LLM."""
+    return "finalize" if state.get("security_blocked", False) else "classify"
+
+
 def route_after_classify(state: AgentState) -> str:
     """Map classified route to the next graph node.
 
@@ -22,7 +27,14 @@ def route_after_classify(state: AgentState) -> str:
 
     Hint: use a dict mapping for clean implementation.
     """
-    raise NotImplementedError("TODO(student): implement route mapping after classify")
+    route_map = {
+        "simple": "answer",
+        "tool": "tool",
+        "missing_info": "clarify",
+        "risky": "risky_action",
+        "error": "retry",
+    }
+    return route_map.get(state.get("route", ""), "answer")
 
 
 def route_after_evaluate(state: AgentState) -> str:
@@ -34,7 +46,9 @@ def route_after_evaluate(state: AgentState) -> str:
     - If evaluation_result == "needs_retry" → "retry"
     - Otherwise → "answer"
     """
-    raise NotImplementedError("TODO(student): implement evaluate routing for retry loop")
+    if state.get("evaluation_result") == "needs_retry":
+        return "retry"
+    return "answer"
 
 
 def route_after_retry(state: AgentState) -> str:
@@ -45,7 +59,9 @@ def route_after_retry(state: AgentState) -> str:
     - If attempt < max_attempts → "tool" (try again)
     - If attempt >= max_attempts → "dead_letter" (give up, escalate)
     """
-    raise NotImplementedError("TODO(student): implement bounded retry routing")
+    attempt = state.get("attempt", 0)
+    max_attempts = state.get("max_attempts", 3)
+    return "tool" if attempt < max_attempts else "dead_letter"
 
 
 def route_after_approval(state: AgentState) -> str:
@@ -54,4 +70,5 @@ def route_after_approval(state: AgentState) -> str:
     - If approved → "tool" (proceed with risky action)
     - If rejected → "clarify" (ask user for alternative)
     """
-    raise NotImplementedError("TODO(student): implement approval routing")
+    approval = state.get("approval") or {}
+    return "tool" if approval.get("approved", False) else "clarify"

@@ -1,113 +1,23 @@
-"""Report generation helper.
-
-TODO(student): implement report rendering using MetricsReport data
-and the template in reports/lab_report_template.md.
-"""
-
-from __future__ import annotations
-
-from datetime import date
-from pathlib import Path
-
-from .metrics import MetricsReport
-
-
-def _table_cell(value: object) -> str:
-    """Escape a value for safe use inside a Markdown table cell."""
-    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
-
-
-def render_report(metrics: MetricsReport) -> str:
-    """Render a complete lab report from metrics data.
-
-    TODO(student): Generate a report that includes:
-    1. Metrics summary table (total scenarios, success rate, retries, interrupts)
-    2. Per-scenario results table
-    3. Architecture explanation (your graph design, state schema, reducers)
-    4. Failure analysis (at least two failure modes you considered)
-    5. Improvement plan
-
-    Use reports/lab_report_template.md as your guide.
-
-    Return: formatted markdown string
-    """
-    successful = sum(1 for item in metrics.scenario_metrics if item.success)
-    failed = [item for item in metrics.scenario_metrics if not item.success]
-
-    scenario_rows: list[str] = []
-    for item in sorted(metrics.scenario_metrics, key=lambda metric: metric.scenario_id):
-        errors = "; ".join(item.errors) if item.errors else "-"
-        scenario_rows.append(
-            "| "
-            + " | ".join(
-                _table_cell(value)
-                for value in (
-                    item.scenario_id,
-                    item.expected_route,
-                    item.actual_route or "-",
-                    "Yes" if item.success else "No",
-                    item.nodes_visited,
-                    item.retry_count,
-                    item.interrupt_count,
-                    "Yes" if item.approval_observed else "No",
-                    item.latency_ms,
-                    errors,
-                )
-            )
-            + " |"
-        )
-
-    if failed:
-        failed_summary = ", ".join(
-            f"`{_table_cell(item.scenario_id)}` "
-            f"(expected `{_table_cell(item.expected_route)}`, "
-            f"actual `{_table_cell(item.actual_route or '-')}`)"
-            for item in failed
-        )
-        observed_failures = (
-            f"{len(failed)} scenario(s) did not meet the success criteria: {failed_summary}."
-        )
-    else:
-        observed_failures = "No scenario-level failures were observed in this run."
-
-    scenario_header = (
-        "| Scenario | Expected route | Actual route | Success | Nodes | Retries | "
-        "HITL interrupts | Approval observed | Latency (ms) | Errors |"
-    )
-    resume_evidence = "successful" if metrics.resume_success else "not recorded"
-    retry_items = [item for item in metrics.scenario_metrics if item.retry_count > 0]
-    retry_evidence = ", ".join(
-        f"`{_table_cell(item.scenario_id)}`={item.retry_count}" for item in retry_items
-    ) or "none"
-    approval_items = [
-        item for item in metrics.scenario_metrics if item.approval_required
-    ]
-    approval_evidence = ", ".join(
-        f"`{_table_cell(item.scenario_id)}`="
-        f"{'observed' if item.approval_observed else 'missing'}"
-        for item in approval_items
-    ) or "none"
-
-    return f"""# Day 08 Lab Report
+# Day 08 Lab Report
 
 ## 1. Team / student
 
 - Name: Hai
 - Repo: `HaiTruong211200/phase2-k3-4-track3-day8-langgraph-agent`
 - Commit reviewed: `6d8252d` plus the current working-tree implementation
-- Generated: {date.today().isoformat()}
+- Generated: 2026-08-25
 
 ## 2. Metrics summary
 
 | Metric | Value |
 |---|---:|
-| Total scenarios | {metrics.total_scenarios} |
-| Successful scenarios | {successful} |
-| Success rate | {metrics.success_rate:.2%} |
-| Average nodes visited | {metrics.avg_nodes_visited:.2f} |
-| Total retries | {metrics.total_retries} |
-| Total real HITL interrupts | {metrics.total_interrupts} |
-| Persistence resume demonstrated | {"Yes" if metrics.resume_success else "No"} |
+| Total scenarios | 7 |
+| Successful scenarios | 7 |
+| Success rate | 100.00% |
+| Average nodes visited | 6.43 |
+| Total retries | 3 |
+| Total real HITL interrupts | 0 |
+| Persistence resume demonstrated | Yes |
 
 ## 3. Architecture
 
@@ -147,9 +57,15 @@ node transition to be recovered and inspected within that run.
 
 ## 5. Scenario results
 
-{scenario_header}
+| Scenario | Expected route | Actual route | Success | Nodes | Retries | HITL interrupts | Approval observed | Latency (ms) | Errors |
 |---|---|---|---:|---:|---:|---:|---:|---:|---|
-{chr(10).join(scenario_rows)}
+| S01_simple | simple | simple | Yes | 4 | 0 | 0 | No | 6620 | - |
+| S02_tool | tool | tool | Yes | 6 | 0 | 0 | No | 4312 | - |
+| S03_missing | missing_info | missing_info | Yes | 4 | 0 | 0 | No | 1718 | - |
+| S04_risky | risky | risky | Yes | 8 | 0 | 0 | Yes | 4204 | - |
+| S05_error | error | error | Yes | 10 | 2 | 0 | No | 4045 | Transient failure recorded; retry attempt 1; Transient failure recorded; retry attempt 2 |
+| S06_delete | risky | risky | Yes | 8 | 0 | 0 | Yes | 4310 | - |
+| S07_dead_letter | error | error | Yes | 5 | 1 | 0 | No | 1817 | Transient failure recorded; retry attempt 1; Maximum retry count reached after 1 attempt(s) |
 
 ## 6. Failure analysis
 
@@ -165,7 +81,7 @@ node transition to be recovered and inspected within that run.
 - **Termination guarantee:** `attempt` increases monotonically and the retry edge is allowed
   only while `attempt < max_attempts`. At the bound, `dead_letter` sets `final_answer` and
   follows the fixed `dead_letter -> finalize -> END` edges.
-- **Observed evidence:** retry counts in the final metrics are {retry_evidence}. A scenario
+- **Observed evidence:** retry counts in the final metrics are `S05_error`=2, `S07_dead_letter`=1. A scenario
   can be successful because it followed its expected error/dead-letter route, not because
   the underlying tool operation succeeded.
 - **Residual limitation:** the tool and evaluator are deterministic mocks. They do not yet
@@ -185,8 +101,8 @@ node transition to be recovered and inspected within that run.
 - **Termination guarantee:** the rejected branch has fixed edges
   `clarify -> finalize -> END`. The approved branch rejoins the already bounded
   `tool -> evaluate` path.
-- **Observed evidence:** approval-required scenarios report {approval_evidence}. The final
-  scenario batch used mock approvals and recorded {metrics.total_interrupts} real HITL
+- **Observed evidence:** approval-required scenarios report `S04_risky`=observed, `S06_delete`=observed. The final
+  scenario batch used mock approvals and recorded 0 real HITL
   interrupts, so it demonstrates the approval gate but not an interactive rejection.
 - **Residual limitation:** mock approval defaults to `True`. Rejection routing is covered by
   tests, but production requires authenticated reviewers, durable pause/resume, authorization
@@ -199,7 +115,7 @@ and blocks high-confidence instruction-override, prompt-exfiltration, role-injec
 safety-bypass patterns before classification. LLM calls additionally separate trusted
 system instructions from untrusted user data.
 
-Scenario-level outcome: {observed_failures}
+Scenario-level outcome: No scenario-level failures were observed in this run.
 
 ## 7. Persistence / recovery evidence
 
@@ -208,7 +124,7 @@ random run suffix to `thread_id`, preventing old append-only events from contami
 metrics. After the scenario loop, the CLI constructs a **new saver and graph** against the
 same database, retrieves the first scenario with the same `thread_id`, and requires both a
 matching `scenario_id` and at least two history snapshots before setting
-`resume_success=true`. The final metrics record this proof as **{resume_evidence}**.
+`resume_success=true`. The final metrics record this proof as **successful**.
 
 The independent persistence test is stricter about connection lifecycle: it invokes a
 small graph, closes the original SQLite connection, reopens the database through a second
@@ -242,11 +158,3 @@ Next, classify errors as retryable/permanent, add exponential backoff, and test 
 recovery during a paused approval. Scenario latency is now measured end-to-end, but per-node
 latency, token usage, tool latency, and trace-delivery success remain future instrumentation;
 the report therefore does not infer them from the current metrics.
-"""
-
-
-def write_report(metrics: MetricsReport, output_path: str | Path) -> None:
-    """Write the rendered report to a file."""
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_report(metrics), encoding="utf-8")

@@ -43,3 +43,45 @@ def test_summarize_metrics():
     report = summarize_metrics([m1, m2])
     assert report.total_scenarios == 2
     assert 0 <= report.success_rate <= 1
+
+
+def test_mock_approval_is_not_counted_as_real_interrupt():
+    state = {
+        "scenario_id": "risky",
+        "route": "risky",
+        "final_answer": "ok",
+        "events": [
+            make_event(
+                "approval",
+                "approved",
+                "mock approval",
+                interrupted=False,
+            )
+        ],
+        "errors": [],
+        "approval": {"approved": True},
+    }
+    metric = metric_from_state(state, "risky", True, latency_ms=25)
+    assert metric.approval_observed is True
+    assert metric.interrupt_count == 0
+    assert metric.latency_ms == 25
+
+
+def test_real_interrupt_uses_event_metadata():
+    state = {
+        "scenario_id": "risky",
+        "route": "risky",
+        "final_answer": "ok",
+        "events": [
+            make_event(
+                "approval",
+                "approved",
+                "human approval",
+                interrupted=True,
+            )
+        ],
+        "errors": [],
+        "approval": {"approved": True},
+    }
+    metric = metric_from_state(state, "risky", True)
+    assert metric.interrupt_count == 1
